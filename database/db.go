@@ -2,6 +2,8 @@ package database
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"log"
@@ -25,6 +27,14 @@ const (
 	defaultUsername = "admin"
 	defaultPassword = "admin"
 )
+
+func getConfigPath() string {
+	configPath := os.Getenv("XUI_PANEL_CONFIG")
+	if configPath == "" {
+		return "/etc/x-ui/panel.json"
+	}
+	return configPath
+}
 
 func initModels() error {
 	models := []any{
@@ -145,7 +155,31 @@ func InitDB(dbPath string) error {
 	if err := initUser(); err != nil {
 		return err
 	}
-	return runSeeders(isUsersEmpty)
+
+	seedErr := runSeeders(isUsersEmpty)
+
+	settings := make(map[string]string)
+	file, err := os.Open(getConfigPath())
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+
+		return seedErr
+	}
+	err = json.NewDecoder(file).Decode(&settings)
+	if err != nil {
+		return err
+	}
+
+	for key, value := range settings {
+		err = db.Model(model.Setting{}).Where("key = ?", key).Update("value", value).Error
+		if err != nil {
+			return err
+		}
+	}
+
+	return seedErr
 }
 
 func CloseDB() error {
